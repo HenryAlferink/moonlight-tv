@@ -14,3 +14,7 @@ Validation protocol:
 5. Diagnose logs for `WinKey: observing`, `WinKey: left DOWN`, or `WinKey SDL:`.
 
 Limitations: Requires the TV app to be allowed to read `/dev/input/event*`. Non-exclusive forwarding may not prevent webOS from also handling the key. Key injection originates from evdev worker thread, and should be examined if host input ordering is inconsistent. This is experimental and **not tested on the actual LG TV**.
+
+## Build status
+
+The original main-branch webOS build workflow is used unchanged. This branch is deliberately kept separate so the normal Moonlight app and its Bluetooth SDL event handling are not replaced.
