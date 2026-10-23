@@ -30,6 +30,10 @@ typedef struct session_input_vmouse_t {
     SDL_TimerID timer_id;
 } session_input_vmouse_t;
 
+#if TARGET_WEBOS
+typedef struct keyboard_meta_t keyboard_meta_t;
+#endif
+
 typedef struct stream_input_t {
     session_t *session;
     app_input_t *input;
@@ -43,6 +47,9 @@ typedef struct stream_input_t {
     float touchpad_scroll_scale;
     session_input_vmouse_t vmouse;
     session_input_touchpad_t *touchpads;
+#if TARGET_WEBOS
+    keyboard_meta_t *keyboard_meta;
+#endif
 #if FEATURE_INPUT_EVMOUSE
     session_evmouse_t evmouse;
 #endif

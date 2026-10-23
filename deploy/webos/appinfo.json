@@ -4,13 +4,13 @@
     "vendor": "Mariotaku Lee",
     "type": "native",
     "main": "bin/moonlight",
-    "title": "Moonlight",
+    "title": "Moonlight WinKey",
     "icon": "icon.png",
     "iconColor": "#ffffff",
     "largeIcon": "icon_large.png",
     "splashBackground": "splash.png",
-    "dialAppName": "Moonlight",
-    "appDescription": "Open Source NVIDIA GameStream Client",
+    "dialAppName": "Moonlight WinKey",
+    "appDescription": "Experimental Windows-key capture build of Moonlight TV",
     "supportTouchMode": "full",
     "useAllMouseButtons": true
 }

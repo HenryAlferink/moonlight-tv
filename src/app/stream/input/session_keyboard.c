@@ -10,6 +10,9 @@
 #include "util/user_event.h"
 
 #include "vk.h"
+#if TARGET_WEBOS
+#include "platform/webos/keyboard_meta.h"
+#endif
 
 enum KeyCombo {
     KeyComboQuit,
@@ -130,6 +133,16 @@ void stream_input_handle_key(stream_input_t *input, const SDL_KeyboardEvent *eve
 #if TARGET_WEBOS
     if (stream_input_webos_intercept_remote_keys(input, event, &keyCode)) {
         return;
+    }
+    /* Avoid forwarding Meta twice when it is read from /dev/input.
+     * All ordinary keys remain handled by original Moonlight SDL code. */
+    if (event->keysym.scancode == SDL_SCANCODE_LGUI ||
+        event->keysym.scancode == SDL_SCANCODE_RGUI) {
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "WinKey SDL: scancode=%d state=%d watcher=%d",
+                    event->keysym.scancode, event->state,
+                    keyboard_meta_is_active(input->keyboard_meta));
+        if (keyboard_meta_is_active(input->keyboard_meta)) return;
     }
 #endif
     char modifiers;

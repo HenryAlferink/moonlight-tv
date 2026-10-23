@@ -20,6 +20,20 @@
 #include "stream/session.h"
 #include "stream/session_priv.h"
 #include "session_evmouse.h"
+#if TARGET_WEBOS
+#include "platform/webos/keyboard_meta.h"
+#include "stream/input/vk.h"
+
+/* Only called while the watcher is running during an active stream.
+ * Preserve the existing SDL keyboard/mouse and Bluetooth paths. */
+static void moonlight_meta_callback(bool right, bool down, void *userdata) {
+    stream_input_t *input = userdata;
+    if (input->view_only) return;
+    short key = right ? VK_RWIN : VK_LWIN;
+    LiSendKeyboardEvent(0x8000 | key, down ? KEY_ACTION_DOWN : KEY_ACTION_UP,
+                        down ? MODIFIER_META : 0);
+}
+#endif
 
 /* Pointer travel, in host pixels, for a finger swept across the full width of the
  * touchpad at 100% sensitivity. Vertical travel is derived from each pad's own
@@ -44,6 +58,9 @@ void session_input_init(stream_input_t *input, session_t *session, app_input_t *
                                               : -TOUCHPAD_SCROLL_FINGER_SCALE;
     input->touchpads = NULL;
     input->touchpad_count = 0;
+#if TARGET_WEBOS
+    input->keyboard_meta = NULL;
+#endif
 #if FEATURE_INPUT_EVMOUSE
     if (!config->view_only && config->hardware_mouse) {
         session_evmouse_init(&input->evmouse, session);
@@ -52,6 +69,10 @@ void session_input_init(stream_input_t *input, session_t *session, app_input_t *
 }
 
 void session_input_deinit(stream_input_t *input) {
+#if TARGET_WEBOS
+    keyboard_meta_stop(input->keyboard_meta);
+    input->keyboard_meta = NULL;
+#endif
     stream_input_touchpad_mouse_deinit(input);
 #if FEATURE_INPUT_EVMOUSE
     const session_config_t *config = &input->session->config;
@@ -72,6 +93,11 @@ void session_input_interrupt(stream_input_t *input) {
 
 void session_input_started(stream_input_t *input) {
     input->started = true;
+#if TARGET_WEBOS
+    if (!input->view_only && !input->keyboard_meta) {
+        input->keyboard_meta = keyboard_meta_start(moonlight_meta_callback, input);
+    }
+#endif
     if (!input->view_only) {
         stream_input_touchpad_mouse_init(input);
     }
@@ -85,6 +111,10 @@ void session_input_started(stream_input_t *input) {
 }
 
 void session_input_stopped(stream_input_t *input) {
+#if TARGET_WEBOS
+    keyboard_meta_stop(input->keyboard_meta);
+    input->keyboard_meta = NULL;
+#endif
     input->started = false;
     stream_input_touchpad_mouse_deinit(input);
 }
