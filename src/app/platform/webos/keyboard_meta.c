@@ -10,6 +10,8 @@
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdio.h>
+#include <stdint.h>
+#include <time.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
@@ -36,6 +38,13 @@ struct keyboard_meta_t {
     struct meta_device_t devices[META_MAX_DEVICES];
     int count; /* reader thread only */
 };
+
+/* Monotonic time prevents events from triggering another slow device scan. */
+static uint64_t monotonic_us(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * UINT64_C(1000000) + (uint64_t)ts.tv_nsec / 1000u;
+}
 
 static bool has_bit(const unsigned char *bits, unsigned bit) {
     return (bits[bit / 8] & (1u << (bit % 8))) != 0;
@@ -123,15 +132,19 @@ static void process_event(keyboard_meta_t *w, struct meta_device_t *device,
     bool down = event->value == 1;
     if (*state == down) return;
     *state = down;
-    commons_log_info("Input", "WinKey: %s %s", right ? "right" : "left",
-                     down ? "DOWN" : "UP");
     w->callback(right, down, w->userdata);
 }
 
 static void *keyboard_meta_thread(void *context) {
     keyboard_meta_t *w = context;
+    uint64_t next_scan_us = 0;
     while (atomic_load(&w->running)) {
-        scan_keyboards(w);
+        uint64_t now_us = monotonic_us();
+        if (now_us >= next_scan_us) {
+            scan_keyboards(w);
+            /* Re-enumerate every 500 ms, not after every key press/release. */
+            next_scan_us = monotonic_us() + META_SCAN_INTERVAL_US;
+        }
         fd_set rfds;
         FD_ZERO(&rfds);
         int maxfd = -1;
@@ -139,7 +152,12 @@ static void *keyboard_meta_thread(void *context) {
             FD_SET(w->devices[i].fd, &rfds);
             if (w->devices[i].fd > maxfd) maxfd = w->devices[i].fd;
         }
-        struct timeval timeout = {0, META_SCAN_INTERVAL_US};
+        now_us = monotonic_us();
+        uint64_t remaining = next_scan_us > now_us ? next_scan_us - now_us : 0;
+        struct timeval timeout = {
+            .tv_sec = (time_t)(remaining / UINT64_C(1000000)),
+            .tv_usec = (suseconds_t)(remaining % UINT64_C(1000000)),
+        };
         int ret = select(maxfd + 1, &rfds, NULL, NULL, &timeout);
         if (ret <= 0) continue;
         for (int i = w->count - 1; i >= 0; --i) {

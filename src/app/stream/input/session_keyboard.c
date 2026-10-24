@@ -138,10 +138,6 @@ void stream_input_handle_key(stream_input_t *input, const SDL_KeyboardEvent *eve
      * All ordinary keys remain handled by original Moonlight SDL code. */
     if (event->keysym.scancode == SDL_SCANCODE_LGUI ||
         event->keysym.scancode == SDL_SCANCODE_RGUI) {
-        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                    "WinKey SDL: scancode=%d state=%d watcher=%d",
-                    event->keysym.scancode, event->state,
-                    keyboard_meta_is_active(input->keyboard_meta));
         if (keyboard_meta_is_active(input->keyboard_meta)) return;
     }
 #endif
