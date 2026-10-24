@@ -194,6 +194,11 @@ static int mouse_worker(session_evmouse_t *mouse) {
         /* A new Bluetooth connection normally creates a new evdev event node.
          * Reopen the library's mouse after each topology change. */
         uint64_t signature = mouse_topology_signature();
+        if (signature == 0) {
+            /* Don't repeatedly open an absent mouse while Bluetooth is off. */
+            SDL_Delay(400);
+            continue;
+        }
         evmouse_t *dev = evmouse_open_default();
         if (!dev) {
             SDL_Delay(400);
