@@ -48,7 +48,14 @@ bool session_handle_input_event(session_t *session, const SDL_Event *event) {
         }
         case SDL_MOUSEBUTTONDOWN:
         case SDL_MOUSEBUTTONUP: {
+            /* On webOS the physical mouse is captured by evmouse when
+             * hardware mouse mode is enabled, but the Magic Remote still
+             * delivers SDL button events. Forward those clicks too. */
+#if TARGET_WEBOS
+            if (!input->view_only) {
+#else
             if (!input->view_only && !input->no_sdl_mouse) {
+#endif
                 stream_input_handle_mbutton(input, &event->button);
             }
             break;
