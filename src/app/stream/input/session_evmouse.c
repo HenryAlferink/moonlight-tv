@@ -73,6 +73,12 @@ static int mouse_worker(session_evmouse_t *mouse) {
         return ENODEV;
     }
     commons_log_info("Session", "EvMouse opened");
+#if TARGET_WEBOS
+    /* Suppress the duplicated LG system cursor by exclusively capturing the
+     * physical mouse while streaming. Closing evmouse releases the capture.
+     * The normal evmouse listener still forwards mouse events to the host. */
+    evmouse_set_grab(dev, SDL_TRUE);
+#endif
     evmouse_listen(dev, mouse_listener, mouse);
     set_evmouse(mouse, NULL);
     evmouse_close(dev);
