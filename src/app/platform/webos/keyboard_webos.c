@@ -64,18 +64,26 @@ bool stream_input_webos_intercept_remote_keys(stream_input_t *input, const SDL_K
                 }
             }
             return true;
-        case SDL_SCANCODE_WEBOS_BLUE:
-            /* Switch apps: Alt+Tab. Retain Alt until the button is released. */
-            if (!input->view_only && !event->repeat) {
-                if (event->state == SDL_PRESSED) {
-                    LiSendKeyboardEvent(0x8000 | VK_LMENU, KEY_ACTION_DOWN, MODIFIER_ALT);
-                    LiSendKeyboardEvent(0x8000 | VK_TAB, KEY_ACTION_DOWN, MODIFIER_ALT);
-                } else {
-                    LiSendKeyboardEvent(0x8000 | VK_TAB, KEY_ACTION_UP, MODIFIER_ALT);
-                    LiSendKeyboardEvent(0x8000 | VK_LMENU, KEY_ACTION_UP, 0);
+        case SDL_SCANCODE_WEBOS_BLUE: {
+            /* Ctrl+Alt+Tab opens the persistent Windows task switcher.
+             * Send a complete chord on the initial press only; never hold Tab
+             * down while the remote key is held (Windows auto-repeats it). */
+            static bool blue_held = false;
+            if (event->state == SDL_RELEASED) {
+                blue_held = false;
+            } else if (event->state == SDL_PRESSED && !event->repeat && !blue_held) {
+                blue_held = true;
+                if (!input->view_only) {
+                    LiSendKeyboardEvent(0x8000 | VK_LCONTROL, KEY_ACTION_DOWN, MODIFIER_CTRL);
+                    LiSendKeyboardEvent(0x8000 | VK_LMENU, KEY_ACTION_DOWN, MODIFIER_CTRL | MODIFIER_ALT);
+                    LiSendKeyboardEvent(0x8000 | VK_TAB, KEY_ACTION_DOWN, MODIFIER_CTRL | MODIFIER_ALT);
+                    LiSendKeyboardEvent(0x8000 | VK_TAB, KEY_ACTION_UP, MODIFIER_CTRL | MODIFIER_ALT);
+                    LiSendKeyboardEvent(0x8000 | VK_LMENU, KEY_ACTION_UP, MODIFIER_CTRL);
+                    LiSendKeyboardEvent(0x8000 | VK_LCONTROL, KEY_ACTION_UP, 0);
                 }
             }
             return true;
+        }
         default:
             return false;
     }
