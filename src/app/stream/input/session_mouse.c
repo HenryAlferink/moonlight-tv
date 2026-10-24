@@ -69,6 +69,15 @@ void stream_input_handle_mmotion(stream_input_t *input, const SDL_MouseMotionEve
     }
     if (input->no_sdl_mouse) {
         if (!hw_mouse) {
+#if TARGET_WEBOS
+            /* The hardware mouse is exclusively grabbed via evmouse, so
+             * normal SDL pointer events during a stream are still needed for
+             * the LG Magic Remote. Forward its on-screen position instead
+             * of dropping it along with the hardware mouse's SDL events. */
+            LiSendMousePositionEvent((short) event->x, (short) event->y,
+                                     (short) input->session->display_width,
+                                     (short) input->session->display_height);
+#endif
             return;
         }
         LiSendMouseMoveEvent((short) event->xrel, (short) event->yrel);
