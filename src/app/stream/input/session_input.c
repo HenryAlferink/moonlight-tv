@@ -27,43 +27,14 @@
 #include "util/bus.h"
 #include <stdlib.h>
 
-/* Receive the Meta key from evdev without claiming the keyboard. Dispatch it
- * via the app's SDL event loop like the rest of the streaming input. */
-typedef struct {
-    app_t *app;
-    session_t *session;
-    bool right;
-    bool down;
-} meta_key_dispatch_t;
-
-static void moonlight_meta_dispatch(void *userdata) {
-    meta_key_dispatch_t *event = userdata;
-    if (event->app->session == event->session &&
-        session_accepting_input(event->session) &&
-        !event->session->input.view_only &&
-        app_configuration->syskey_capture) {
-        short key = event->right ? VK_RWIN : VK_LWIN;
-        LiSendKeyboardEvent(0x8000 | key,
-                            event->down ? KEY_ACTION_DOWN : KEY_ACTION_UP,
-                            event->down ? MODIFIER_META : 0);
-    }
-    free(event);
-}
-
-static void moonlight_meta_callback(bool right, bool down, void *userdata) {
+/* Low-level physical keyboard events are forwarded directly to the host.
+ * Remote-control buttons remain on SDL; do not grab LGE/M-RCU devices. */
+static void moonlight_keyboard_callback(short vk, bool down, char modifiers, void *userdata) {
     stream_input_t *input = userdata;
-    if (input->view_only) return;
-    meta_key_dispatch_t *event = malloc(sizeof(*event));
-    if (!event) return;
-    *event = (meta_key_dispatch_t) {
-        .app = input->session->app,
-        .session = input->session,
-        .right = right,
-        .down = down,
-    };
-    if (!app_bus_post(event->app, moonlight_meta_dispatch, event)) {
-        free(event);
-    }
+    if (!input->started || input->view_only ||
+        !session_accepting_input(input->session)) return;
+    LiSendKeyboardEvent(0x8000 | vk,
+                        down ? KEY_ACTION_DOWN : KEY_ACTION_UP, modifiers);
 }
 #endif
 
@@ -127,7 +98,7 @@ void session_input_started(stream_input_t *input) {
     input->started = true;
 #if TARGET_WEBOS
     if (!input->view_only && app_configuration->syskey_capture && !input->keyboard_meta) {
-        input->keyboard_meta = keyboard_meta_start(moonlight_meta_callback, input);
+        input->keyboard_meta = keyboard_meta_start(moonlight_keyboard_callback, input);
     }
 #endif
     if (!input->view_only) {

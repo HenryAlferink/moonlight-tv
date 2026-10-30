@@ -1,8 +1,11 @@
-/* Experimental, non-exclusive Meta-key fallback for LG webOS.
- * Listen for Win key through Linux evdev while SDL continues to handle other
- * keys and mice. Re-scan for Bluetooth reconnection. Never call EVIOCGRAB. */
+/* Experimental webOS physical keyboard capture for streaming.
+ * Grabs real Bluetooth/USB keyboards to keep OS shortcuts (Alt+F4,
+ * Ctrl+Alt+Delete, Meta) away from the TV compositor, forwarding keys to
+ * the Windows host. Magic Remote stays on SDL. Hotplug works mid-stream. */
 #include "keyboard_meta.h"
 #include "logging.h"
+#include "stream/input/vk.h"
+#include <Limelight.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -23,8 +26,7 @@
 struct meta_device_t {
     int fd;
     char path[128];
-    bool left_down;
-    bool right_down;
+    bool pressed[KEY_MAX + 1];
 };
 
 struct keyboard_meta_t {
@@ -35,6 +37,7 @@ struct keyboard_meta_t {
     void *userdata;
     struct meta_device_t devices[META_MAX_DEVICES];
     int count; /* reader thread only */
+    bool ctrl, alt, shift, meta; /* reader thread only */
 };
 
 static bool has_bit(const unsigned char *bits, unsigned bit) {
@@ -49,7 +52,7 @@ static bool is_keyboard(int fd) {
     unsigned char keys[(KEY_MAX / 8) + 1] = {0};
     if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(keys)), keys) < 0) return false;
     return has_bit(keys, KEY_A) && has_bit(keys, KEY_LEFTCTRL) &&
-           (has_bit(keys, KEY_LEFTMETA) || has_bit(keys, KEY_RIGHTMETA));
+           has_bit(keys, KEY_Q);
 }
 
 static bool already_open(const keyboard_meta_t *w, const char *path) {
@@ -82,27 +85,163 @@ static void scan_keyboards(keyboard_meta_t *w) {
         if (length < 0 || (size_t)length >= sizeof(path) || already_open(w, path)) continue;
         int fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
         if (fd < 0) continue;
-        if (!is_keyboard(fd) || fd >= FD_SETSIZE) {
+        if (!is_keyboard(fd) || fd >= FD_SETSIZE || ioctl(fd, EVIOCGRAB, 1) < 0) {
             close(fd);
             continue;
         }
         struct meta_device_t *device = &w->devices[w->count++];
         device->fd = fd;
-        device->left_down = false;
-        device->right_down = false;
+        memset(device->pressed, 0, sizeof(device->pressed));
         snprintf(device->path, sizeof(device->path), "%s", path);
         atomic_store(&w->active_count, w->count);
-        commons_log_info("Input", "WinKey: observing %s (non-exclusive)", path);
+        commons_log_info("Input", "Keyboard: grabbed physical device %s", path);
     }
     closedir(dir);
 }
 
+static short linux_key_to_vk(unsigned code) {
+    switch (code) {
+        case KEY_ESC: return VK_ESCAPE;
+        case KEY_1: return VK_1;
+        case KEY_2: return VK_2;
+        case KEY_3: return VK_3;
+        case KEY_4: return VK_4;
+        case KEY_5: return VK_5;
+        case KEY_6: return VK_6;
+        case KEY_7: return VK_7;
+        case KEY_8: return VK_8;
+        case KEY_9: return VK_9;
+        case KEY_0: return VK_0;
+        case KEY_MINUS: return VK_OEM_MINUS;
+        case KEY_EQUAL: return 0xBB; /* VK_OEM_PLUS */
+        case KEY_BACKSPACE: return VK_BACK;
+        case KEY_TAB: return VK_TAB;
+        case KEY_Q: return VK_Q;
+        case KEY_W: return VK_W;
+        case KEY_E: return VK_E;
+        case KEY_R: return VK_R;
+        case KEY_T: return VK_T;
+        case KEY_Y: return VK_Y;
+        case KEY_U: return VK_U;
+        case KEY_I: return VK_I;
+        case KEY_O: return VK_O;
+        case KEY_P: return VK_P;
+        case KEY_LEFTBRACE: return VK_OEM_4;
+        case KEY_RIGHTBRACE: return VK_OEM_6;
+        case KEY_ENTER:
+        case KEY_KPENTER: return VK_RETURN;
+        case KEY_LEFTCTRL: return VK_LCONTROL;
+        case KEY_RIGHTCTRL: return VK_RCONTROL;
+        case KEY_A: return VK_A;
+        case KEY_S: return VK_S;
+        case KEY_D: return VK_D;
+        case KEY_F: return VK_F;
+        case KEY_G: return VK_G;
+        case KEY_H: return VK_H;
+        case KEY_J: return VK_J;
+        case KEY_K: return VK_K;
+        case KEY_L: return VK_L;
+        case KEY_SEMICOLON: return VK_OEM_1;
+        case KEY_APOSTROPHE: return VK_OEM_7;
+        case KEY_GRAVE: return VK_OEM_3;
+        case KEY_LEFTSHIFT: return VK_LSHIFT;
+        case KEY_RIGHTSHIFT: return VK_RSHIFT;
+        case KEY_BACKSLASH: return VK_OEM_5;
+        case KEY_Z: return VK_Z;
+        case KEY_X: return VK_X;
+        case KEY_C: return VK_C;
+        case KEY_V: return VK_V;
+        case KEY_B: return VK_B;
+        case KEY_N: return VK_N;
+        case KEY_M: return VK_M;
+        case KEY_COMMA: return VK_OEM_COMMA;
+        case KEY_DOT: return VK_OEM_PERIOD;
+        case KEY_SLASH: return VK_OEM_2;
+        case KEY_LEFTALT: return VK_LMENU;
+        case KEY_RIGHTALT: return VK_RMENU;
+        case KEY_SPACE: return VK_SPACE;
+        case KEY_CAPSLOCK: return VK_CAPITAL;
+        case KEY_F1: return VK_F1;
+        case KEY_F2: return VK_F2;
+        case KEY_F3: return VK_F3;
+        case KEY_F4: return VK_F4;
+        case KEY_F5: return VK_F5;
+        case KEY_F6: return VK_F6;
+        case KEY_F7: return VK_F7;
+        case KEY_F8: return VK_F8;
+        case KEY_F9: return VK_F9;
+        case KEY_F10: return VK_F10;
+        case KEY_F11: return VK_F11;
+        case KEY_F12: return VK_F12;
+        case KEY_NUMLOCK: return VK_NUMLOCK;
+        case KEY_SCROLLLOCK: return VK_SCROLL;
+        case KEY_KP0: return VK_NUMPAD0;
+        case KEY_KP1: return VK_NUMPAD1;
+        case KEY_KP2: return VK_NUMPAD2;
+        case KEY_KP3: return VK_NUMPAD3;
+        case KEY_KP4: return VK_NUMPAD4;
+        case KEY_KP5: return VK_NUMPAD5;
+        case KEY_KP6: return VK_NUMPAD6;
+        case KEY_KP7: return VK_NUMPAD7;
+        case KEY_KP8: return VK_NUMPAD8;
+        case KEY_KP9: return VK_NUMPAD9;
+        case KEY_KPASTERISK: return VK_MULTIPLY;
+        case KEY_KPMINUS: return VK_SUBTRACT;
+        case KEY_KPPLUS: return VK_ADD;
+        case KEY_KPDOT: return VK_DECIMAL;
+        case KEY_KPSLASH: return VK_DIVIDE;
+        case KEY_102ND: return VK_OEM_102;
+        case KEY_SYSRQ: return VK_SNAPSHOT;
+        case KEY_PAUSE: return VK_PAUSE;
+        case KEY_HOME: return VK_HOME;
+        case KEY_UP: return VK_UP;
+        case KEY_PAGEUP: return VK_PRIOR;
+        case KEY_LEFT: return VK_LEFT;
+        case KEY_RIGHT: return VK_RIGHT;
+        case KEY_END: return VK_END;
+        case KEY_DOWN: return VK_DOWN;
+        case KEY_PAGEDOWN: return VK_NEXT;
+        case KEY_INSERT: return VK_INSERT;
+        case KEY_DELETE: return VK_DELETE;
+        case KEY_LEFTMETA: return VK_LWIN;
+        case KEY_RIGHTMETA: return VK_RWIN;
+#ifdef KEY_COMPOSE
+        case KEY_COMPOSE: return VK_APPS;
+#endif
+#ifdef KEY_MENU
+        case KEY_MENU: return VK_APPS;
+#endif
+        default: return 0;
+    }
+}
+
+
+/* Key modifier state is rebuilt from held keys on all attached devices. */
+static char keyboard_modifiers(keyboard_meta_t *w) {
+    bool ctrl = false, alt = false, shift = false, meta = false;
+    for (int i = 0; i < w->count; i++) {
+        const bool *p = w->devices[i].pressed;
+        ctrl |= p[KEY_LEFTCTRL] || p[KEY_RIGHTCTRL];
+        alt |= p[KEY_LEFTALT] || p[KEY_RIGHTALT];
+        shift |= p[KEY_LEFTSHIFT] || p[KEY_RIGHTSHIFT];
+        meta |= p[KEY_LEFTMETA] || p[KEY_RIGHTMETA];
+    }
+    return (ctrl ? MODIFIER_CTRL : 0) | (alt ? MODIFIER_ALT : 0) |
+           (shift ? MODIFIER_SHIFT : 0) | (meta ? MODIFIER_META : 0);
+}
+
 static void remove_device(keyboard_meta_t *w, int index) {
     struct meta_device_t *device = &w->devices[index];
-    if (device->left_down) w->callback(false, false, w->userdata);
-    if (device->right_down) w->callback(true, false, w->userdata);
+    /* Release any held keys if Bluetooth disconnects during a chord. */
+    for (int code = 0; code <= KEY_MAX; code++) {
+        if (!device->pressed[code]) continue;
+        device->pressed[code] = false;
+        short vk = linux_key_to_vk((unsigned)code);
+        if (vk) w->callback(vk, false, keyboard_modifiers(w), w->userdata);
+    }
+    ioctl(device->fd, EVIOCGRAB, 0);
     close(device->fd);
-    commons_log_info("Input", "WinKey: detached %s", device->path);
+    commons_log_info("Input", "Keyboard: detached %s", device->path);
     for (int i = index; i < w->count - 1; ++i) w->devices[i] = w->devices[i + 1];
     --w->count;
     atomic_store(&w->active_count, w->count);
@@ -110,28 +249,25 @@ static void remove_device(keyboard_meta_t *w, int index) {
 
 static void process_event(keyboard_meta_t *w, struct meta_device_t *device,
                           const struct input_event *event) {
-    if (event->type != EV_KEY || (event->value != 0 && event->value != 1)) return;
-    bool right;
-    bool *state;
-    if (event->code == KEY_LEFTMETA) {
-        right = false;
-        state = &device->left_down;
-    } else if (event->code == KEY_RIGHTMETA) {
-        right = true;
-        state = &device->right_down;
-    } else return;
+    if (event->type != EV_KEY || event->code > KEY_MAX ||
+        (event->value != 0 && event->value != 1)) return;
     bool down = event->value == 1;
-    if (*state == down) return;
-    *state = down;
-    commons_log_info("Input", "WinKey: %s %s", right ? "right" : "left",
-                     down ? "DOWN" : "UP");
-    w->callback(right, down, w->userdata);
+    if (device->pressed[event->code] == down) return;
+    device->pressed[event->code] = down;
+    short vk = linux_key_to_vk(event->code);
+    if (!vk) return;
+    w->callback(vk, down, keyboard_modifiers(w), w->userdata);
 }
 
 static void *keyboard_meta_thread(void *context) {
     keyboard_meta_t *w = context;
+    Uint32 last_scan = 0;
     while (atomic_load(&w->running)) {
-        scan_keyboards(w);
+        Uint32 now = SDL_GetTicks();
+        if (last_scan == 0 || (Uint32)(now - last_scan) >= 500) {
+            scan_keyboards(w);
+            last_scan = now ? now : 1;
+        }
         fd_set rfds;
         FD_ZERO(&rfds);
         int maxfd = -1;
@@ -139,7 +275,7 @@ static void *keyboard_meta_thread(void *context) {
             FD_SET(w->devices[i].fd, &rfds);
             if (w->devices[i].fd > maxfd) maxfd = w->devices[i].fd;
         }
-        struct timeval timeout = {0, META_SCAN_INTERVAL_US};
+        struct timeval timeout = {0, 200000};
         int ret = select(maxfd + 1, &rfds, NULL, NULL, &timeout);
         if (ret <= 0) continue;
         for (int i = w->count - 1; i >= 0; --i) {
