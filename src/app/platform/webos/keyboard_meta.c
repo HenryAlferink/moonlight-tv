@@ -19,10 +19,14 @@
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/select.h>
+#include <sys/inotify.h>
 #include <unistd.h>
 
 #define META_MAX_DEVICES 8
-#define META_SCAN_INTERVAL_US 500000
+/* Avoid walking and probing /dev/input on every keyboard poll. */
+#define KBD_FALLBACK_SCAN_MS 15000u
+#define KBD_FALLBACK_NO_WATCH_MS 2000u
+#define KBD_MAX_EVENTS_PER_WAKE 32
 
 struct meta_device_t {
     int fd;
@@ -34,16 +38,10 @@ struct keyboard_meta_t {
     pthread_t thread;
     atomic_bool running;
     atomic_int active_count;
-    atomic_int grab_attempts;
-    atomic_int grab_failures;
-    atomic_int last_grab_errno;
-    atomic_int key_events;
-    atomic_int sdl_events;
     keyboard_meta_event_fn callback;
     void *userdata;
     struct meta_device_t devices[META_MAX_DEVICES];
     int count; /* reader thread only */
-    bool ctrl, alt, shift, meta; /* reader thread only */
 };
 
 static bool has_bit(const unsigned char *bits, unsigned bit) {
@@ -54,7 +52,10 @@ static bool is_keyboard(int fd) {
     char name[256] = {0};
     if (ioctl(fd, EVIOCGNAME(sizeof(name) - 1), name) < 0) return false;
     if (strstr(name, "LGE") || strstr(name, "M-RCU") ||
-        strstr(name, "Builtin") || strstr(name, "gpio")) return false;
+        strstr(name, "Builtin") || strstr(name, "gpio") ||
+        strstr(name, "Bluetooth-audio") ||
+        strcmp(name, "CHECK INPUT") == 0 || strcmp(name, "IoT keypad") == 0)
+        return false;
     unsigned char keys[(KEY_MAX / 8) + 1] = {0};
     if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(keys)), keys) < 0) return false;
     /* Some Bluetooth keyboards split letter and modifier capabilities across
@@ -96,13 +97,9 @@ static void scan_keyboards(keyboard_meta_t *w) {
             close(fd);
             continue;
         }
-        atomic_fetch_add(&w->grab_attempts, 1);
         if (ioctl(fd, EVIOCGRAB, 1) < 0) {
-            int grab_errno = errno;
-            atomic_fetch_add(&w->grab_failures, 1);
-            atomic_store(&w->last_grab_errno, grab_errno);
-            commons_log_warn("Input", "Keyboard: EVIOCGRAB failed on %s: errno=%d",
-                             path, grab_errno);
+            commons_log_warn("Input", "Keyboard: EVIOCGRAB failed on %s: %s",
+                             path, strerror(errno));
             close(fd);
             continue;
         }
@@ -273,35 +270,76 @@ static void process_event(keyboard_meta_t *w, struct meta_device_t *device,
     device->pressed[event->code] = down;
     short vk = linux_key_to_vk(event->code);
     if (!vk) return;
-    atomic_fetch_add(&w->key_events, 1);
+    /* Forward immediately on the input thread, like Aurora. */
     w->callback(vk, down, keyboard_modifiers(w), w->userdata);
 }
 
 static void *keyboard_meta_thread(void *context) {
     keyboard_meta_t *w = context;
-    Uint32 last_scan = 0;
+
+    /* Watch for new/removed Bluetooth keyboard event nodes. A directory
+     * notification is far cheaper than opening every /dev/input/event*
+     * device every 500 ms on the same thread that forwards keystrokes. */
+    int notifyfd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+    if (notifyfd >= FD_SETSIZE ||
+        (notifyfd >= 0 && inotify_add_watch(notifyfd, "/dev/input",
+            IN_CREATE | IN_DELETE | IN_MOVED_TO | IN_MOVED_FROM) < 0)) {
+        if (notifyfd >= 0) close(notifyfd);
+        notifyfd = -1;
+    }
+    if (notifyfd < 0) {
+        commons_log_warn("Input", "Keyboard: inotify unavailable; using periodic hotplug scan");
+    }
+
+    scan_keyboards(w);
+    Uint32 last_scan = SDL_GetTicks();
+
     while (atomic_load(&w->running)) {
         Uint32 now = SDL_GetTicks();
-        if (last_scan == 0 || (Uint32)(now - last_scan) >= 500) {
+        Uint32 interval = notifyfd >= 0 ? KBD_FALLBACK_SCAN_MS
+                                         : KBD_FALLBACK_NO_WATCH_MS;
+        if ((Uint32)(now - last_scan) >= interval) {
             scan_keyboards(w);
-            last_scan = now ? now : 1;
+            last_scan = now;
         }
+
         fd_set rfds;
         FD_ZERO(&rfds);
         int maxfd = -1;
+        if (notifyfd >= 0) {
+            FD_SET(notifyfd, &rfds);
+            maxfd = notifyfd;
+        }
         for (int i = 0; i < w->count; ++i) {
             FD_SET(w->devices[i].fd, &rfds);
             if (w->devices[i].fd > maxfd) maxfd = w->devices[i].fd;
         }
-        struct timeval timeout = {0, 200000};
+
+        /* select wakes as soon as a key arrives: this timeout only bounds
+         * the shutdown/hotplug recovery wait. It does not delay key input. */
+        struct timeval timeout = {.tv_sec = 0, .tv_usec = 200000};
         int ret = select(maxfd + 1, &rfds, NULL, NULL, &timeout);
-        if (ret <= 0) continue;
+        if (ret < 0) {
+            if (errno != EINTR) SDL_Delay(10);
+            continue;
+        }
+        if (ret == 0) continue;
+
+        bool devices_changed = notifyfd >= 0 && FD_ISSET(notifyfd, &rfds);
+        if (devices_changed) {
+            char notifications[2048];
+            /* Drain notifications so we do one rescan per change burst. */
+            while (read(notifyfd, notifications, sizeof(notifications)) > 0) {}
+        }
+
+        /* Always forward pending keypresses before probing newly attached
+         * devices, to avoid stalling the input path on filesystem ioctls. */
         for (int i = w->count - 1; i >= 0; --i) {
             struct meta_device_t *device = &w->devices[i];
             if (!FD_ISSET(device->fd, &rfds)) continue;
             bool detached = false;
             struct input_event event;
-            for (;;) {
+            for (unsigned n_events = 0; n_events < KBD_MAX_EVENTS_PER_WAKE; ++n_events) {
                 ssize_t n = read(device->fd, &event, sizeof(event));
                 if (n == (ssize_t)sizeof(event)) {
                     process_event(w, device, &event);
@@ -312,9 +350,18 @@ static void *keyboard_meta_thread(void *context) {
                     break;
                 }
             }
-            if (detached) remove_device(w, i);
+            if (detached) {
+                remove_device(w, i);
+                devices_changed = true;
+            }
+        }
+
+        if (devices_changed) {
+            scan_keyboards(w);
+            last_scan = SDL_GetTicks();
         }
     }
+    if (notifyfd >= 0) close(notifyfd);
     for (int i = w->count - 1; i >= 0; --i) remove_device(w, i);
     return NULL;
 }
@@ -327,11 +374,6 @@ keyboard_meta_t *keyboard_meta_start(keyboard_meta_event_fn callback, void *user
     w->userdata = userdata;
     atomic_init(&w->running, true);
     atomic_init(&w->active_count, 0);
-    atomic_init(&w->grab_attempts, 0);
-    atomic_init(&w->grab_failures, 0);
-    atomic_init(&w->last_grab_errno, 0);
-    atomic_init(&w->key_events, 0);
-    atomic_init(&w->sdl_events, 0);
     if (pthread_create(&w->thread, NULL, keyboard_meta_thread, w) != 0) {
         free(w);
         return NULL;
@@ -350,20 +392,3 @@ bool keyboard_meta_is_active(const keyboard_meta_t *watcher) {
     return watcher != NULL && atomic_load(&watcher->active_count) > 0;
 }
 
-void keyboard_meta_get_diagnostics(const keyboard_meta_t *watcher,
-                                  keyboard_meta_diagnostics_t *out) {
-    if (!out) return;
-    memset(out, 0, sizeof(*out));
-    if (!watcher) return;
-    out->grabbed = atomic_load(&watcher->active_count);
-    out->attempts = atomic_load(&watcher->grab_attempts);
-    out->failures = atomic_load(&watcher->grab_failures);
-    out->last_errno = atomic_load(&watcher->last_grab_errno);
-    out->events = atomic_load(&watcher->key_events);
-    out->sdl_events = atomic_load(&watcher->sdl_events);
-}
-
-void keyboard_meta_note_sdl_event(keyboard_meta_t *watcher) {
-    if (watcher && atomic_load(&watcher->active_count) > 0)
-        atomic_fetch_add(&watcher->sdl_events, 1);
-}

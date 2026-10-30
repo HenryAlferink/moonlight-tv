@@ -132,14 +132,6 @@ lv_obj_t *streaming_scene_create(lv_fragment_t *self, lv_obj_t *parent) {
     controller->stats_items.drop_rate = stat_label(stats, "Network frame drop");
     controller->stats_items.host_latency = stat_label(stats, "Host processing latency");
     controller->stats_items.vdec_latency = stat_label(stats, "Decoder latency");
-#if TARGET_WEBOS
-    /* Use separate short rows. The standard stats layout keeps each title
-     * and value on one line; long diagnostics otherwise overlap. */
-    controller->stats_items.keyboard_grabs = stat_label(stats, "Keyboard grabs / tries");
-    controller->stats_items.keyboard_failures = stat_label(stats, "Keyboard failures / err");
-    controller->stats_items.keyboard_events = stat_label(stats, "Keyboard raw events");
-    controller->stats_items.keyboard_sdl_events = stat_label(stats, "Keyboard SDL events");
-#endif
 
 
     lv_obj_add_flag(overlay, LV_OBJ_FLAG_HIDDEN);
