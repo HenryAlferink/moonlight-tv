@@ -11,6 +11,7 @@
 #include "logging.h"
 #if TARGET_WEBOS
 #include "platform/webos/keyboard_meta.h"
+#include "stream/session_priv.h"
 #endif
 
 static void exit_streaming(lv_event_t *event);
