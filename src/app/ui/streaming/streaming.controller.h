@@ -28,6 +28,9 @@ typedef struct {
         lv_obj_t *drop_rate;
         lv_obj_t *host_latency;
         lv_obj_t *vdec_latency;
+#if TARGET_WEBOS
+        lv_obj_t *keyboard_capture;
+#endif
     } stats_items;
     lv_obj_t *stats_pin;
     lv_obj_t *notice, *notice_label;

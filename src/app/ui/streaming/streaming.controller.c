@@ -9,6 +9,9 @@
 #include "util/user_event.h"
 #include "util/i18n.h"
 #include "logging.h"
+#if TARGET_WEBOS
+#include "platform/webos/keyboard_meta.h"
+#endif
 
 static void exit_streaming(lv_event_t *event);
 
@@ -82,6 +85,18 @@ bool streaming_refresh_stats() {
                           audio_stream_info.channels, SS4S_ModuleInfoGetId(app->ss4s.selection.audio_module));
     lv_label_set_text_fmt(controller->stats_items.rtt, "%d ms (var. %d ms)", dst->rtt, dst->rttVariance);
     lv_label_set_text_fmt(controller->stats_items.net_fps, "%.2f FPS", dst->receivedFps);
+#if TARGET_WEBOS
+    keyboard_meta_diagnostics_t kbd;
+    keyboard_meta_get_diagnostics(app->session ? app->session->input.keyboard_meta : NULL, &kbd);
+    if (app->settings.syskey_capture) {
+        lv_label_set_text_fmt(controller->stats_items.keyboard_capture,
+            "Grabbed %d; attempts %d; failures %d (err %d); key events %d",
+            kbd.grabbed, kbd.attempts, kbd.failures, kbd.last_errno, kbd.events);
+    } else {
+        lv_label_set_text(controller->stats_items.keyboard_capture,
+                          "Disabled: enable Capture system keys in Moonlight settings");
+    }
+#endif
 
     if (dst->submittedFrames) {
         lv_label_set_text_fmt(controller->stats_items.drop_rate, "%.2f%%",

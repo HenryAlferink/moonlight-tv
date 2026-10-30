@@ -132,6 +132,9 @@ lv_obj_t *streaming_scene_create(lv_fragment_t *self, lv_obj_t *parent) {
     controller->stats_items.drop_rate = stat_label(stats, "Network frame drop");
     controller->stats_items.host_latency = stat_label(stats, "Host processing latency");
     controller->stats_items.vdec_latency = stat_label(stats, "Decoder latency");
+#if TARGET_WEBOS
+    controller->stats_items.keyboard_capture = stat_label(stats, "Keyboard capture (diagnostic)");
+#endif
 
 
     lv_obj_add_flag(overlay, LV_OBJ_FLAG_HIDDEN);

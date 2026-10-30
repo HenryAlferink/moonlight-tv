@@ -34,6 +34,10 @@ struct keyboard_meta_t {
     pthread_t thread;
     atomic_bool running;
     atomic_int active_count;
+    atomic_int grab_attempts;
+    atomic_int grab_failures;
+    atomic_int last_grab_errno;
+    atomic_int key_events;
     keyboard_meta_event_fn callback;
     void *userdata;
     struct meta_device_t devices[META_MAX_DEVICES];
@@ -52,8 +56,9 @@ static bool is_keyboard(int fd) {
         strstr(name, "Builtin") || strstr(name, "gpio")) return false;
     unsigned char keys[(KEY_MAX / 8) + 1] = {0};
     if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(keys)), keys) < 0) return false;
-    return has_bit(keys, KEY_A) && has_bit(keys, KEY_LEFTCTRL) &&
-           has_bit(keys, KEY_Q);
+    /* Some Bluetooth keyboards split letter and modifier capabilities across
+     * separate evdev nodes. Follow the proven webOS HID keyboard probe. */
+    return has_bit(keys, KEY_A) || has_bit(keys, KEY_LEFTCTRL);
 }
 
 static bool already_open(const keyboard_meta_t *w, const char *path) {
@@ -86,7 +91,17 @@ static void scan_keyboards(keyboard_meta_t *w) {
         if (length < 0 || (size_t)length >= sizeof(path) || already_open(w, path)) continue;
         int fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
         if (fd < 0) continue;
-        if (!is_keyboard(fd) || fd >= FD_SETSIZE || ioctl(fd, EVIOCGRAB, 1) < 0) {
+        if (!is_keyboard(fd) || fd >= FD_SETSIZE) {
+            close(fd);
+            continue;
+        }
+        atomic_fetch_add(&w->grab_attempts, 1);
+        if (ioctl(fd, EVIOCGRAB, 1) < 0) {
+            int grab_errno = errno;
+            atomic_fetch_add(&w->grab_failures, 1);
+            atomic_store(&w->last_grab_errno, grab_errno);
+            commons_log_warn("Input", "Keyboard: EVIOCGRAB failed on %s: errno=%d",
+                             path, grab_errno);
             close(fd);
             continue;
         }
@@ -257,6 +272,7 @@ static void process_event(keyboard_meta_t *w, struct meta_device_t *device,
     device->pressed[event->code] = down;
     short vk = linux_key_to_vk(event->code);
     if (!vk) return;
+    atomic_fetch_add(&w->key_events, 1);
     w->callback(vk, down, keyboard_modifiers(w), w->userdata);
 }
 
@@ -310,6 +326,10 @@ keyboard_meta_t *keyboard_meta_start(keyboard_meta_event_fn callback, void *user
     w->userdata = userdata;
     atomic_init(&w->running, true);
     atomic_init(&w->active_count, 0);
+    atomic_init(&w->grab_attempts, 0);
+    atomic_init(&w->grab_failures, 0);
+    atomic_init(&w->last_grab_errno, 0);
+    atomic_init(&w->key_events, 0);
     if (pthread_create(&w->thread, NULL, keyboard_meta_thread, w) != 0) {
         free(w);
         return NULL;
@@ -326,4 +346,16 @@ void keyboard_meta_stop(keyboard_meta_t *watcher) {
 
 bool keyboard_meta_is_active(const keyboard_meta_t *watcher) {
     return watcher != NULL && atomic_load(&watcher->active_count) > 0;
+}
+
+void keyboard_meta_get_diagnostics(const keyboard_meta_t *watcher,
+                                  keyboard_meta_diagnostics_t *out) {
+    if (!out) return;
+    memset(out, 0, sizeof(*out));
+    if (!watcher) return;
+    out->grabbed = atomic_load(&watcher->active_count);
+    out->attempts = atomic_load(&watcher->grab_attempts);
+    out->failures = atomic_load(&watcher->grab_failures);
+    out->last_errno = atomic_load(&watcher->last_grab_errno);
+    out->events = atomic_load(&watcher->key_events);
 }
