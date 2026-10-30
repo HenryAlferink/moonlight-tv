@@ -41,7 +41,15 @@ bool session_handle_input_event(session_t *session, const SDL_Event *event) {
             break;
         }
         case SDL_MOUSEWHEEL: {
+            /* In hardware-mouse mode, evmouse exclusively grabs the physical
+             * mouse and forwards its wheel via evdev. The LG Magic Remote,
+             * however, still generates an SDL wheel event. Do not discard
+             * that event just because the hardware mouse is enabled. */
+#if TARGET_WEBOS
+            if (!input->view_only) {
+#else
             if (!input->view_only && !input->no_sdl_mouse) {
+#endif
                 stream_input_handle_mwheel(input, &event->wheel);
             }
             break;
