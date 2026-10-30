@@ -6,6 +6,7 @@
 #include "logging.h"
 #include "stream/input/vk.h"
 #include <Limelight.h>
+#include <SDL.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
