@@ -90,12 +90,19 @@ bool streaming_refresh_stats() {
     keyboard_meta_diagnostics_t kbd;
     keyboard_meta_get_diagnostics(app->session ? app->session->input.keyboard_meta : NULL, &kbd);
     if (app->settings.syskey_capture) {
-        lv_label_set_text_fmt(controller->stats_items.keyboard_capture,
-            "Grabbed %d; attempts %d; failures %d (err %d); key events %d",
-            kbd.grabbed, kbd.attempts, kbd.failures, kbd.last_errno, kbd.events);
+        lv_label_set_text_fmt(controller->stats_items.keyboard_grabs,
+                              "%d / %d", kbd.grabbed, kbd.attempts);
+        lv_label_set_text_fmt(controller->stats_items.keyboard_failures,
+                              "%d / %d", kbd.failures, kbd.last_errno);
+        lv_label_set_text_fmt(controller->stats_items.keyboard_events,
+                              "%d", kbd.events);
+        lv_label_set_text_fmt(controller->stats_items.keyboard_sdl_events,
+                              "%d", kbd.sdl_events);
     } else {
-        lv_label_set_text(controller->stats_items.keyboard_capture,
-                          "Disabled: enable Capture system keys in Moonlight settings");
+        lv_label_set_text(controller->stats_items.keyboard_grabs, "Disabled");
+        lv_label_set_text(controller->stats_items.keyboard_failures, "-");
+        lv_label_set_text(controller->stats_items.keyboard_events, "-");
+        lv_label_set_text(controller->stats_items.keyboard_sdl_events, "-");
     }
 #endif
 

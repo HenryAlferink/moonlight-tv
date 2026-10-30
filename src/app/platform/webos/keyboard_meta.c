@@ -38,6 +38,7 @@ struct keyboard_meta_t {
     atomic_int grab_failures;
     atomic_int last_grab_errno;
     atomic_int key_events;
+    atomic_int sdl_events;
     keyboard_meta_event_fn callback;
     void *userdata;
     struct meta_device_t devices[META_MAX_DEVICES];
@@ -330,6 +331,7 @@ keyboard_meta_t *keyboard_meta_start(keyboard_meta_event_fn callback, void *user
     atomic_init(&w->grab_failures, 0);
     atomic_init(&w->last_grab_errno, 0);
     atomic_init(&w->key_events, 0);
+    atomic_init(&w->sdl_events, 0);
     if (pthread_create(&w->thread, NULL, keyboard_meta_thread, w) != 0) {
         free(w);
         return NULL;
@@ -358,4 +360,10 @@ void keyboard_meta_get_diagnostics(const keyboard_meta_t *watcher,
     out->failures = atomic_load(&watcher->grab_failures);
     out->last_errno = atomic_load(&watcher->last_grab_errno);
     out->events = atomic_load(&watcher->key_events);
+    out->sdl_events = atomic_load(&watcher->sdl_events);
+}
+
+void keyboard_meta_note_sdl_event(keyboard_meta_t *watcher) {
+    if (watcher && atomic_load(&watcher->active_count) > 0)
+        atomic_fetch_add(&watcher->sdl_events, 1);
 }

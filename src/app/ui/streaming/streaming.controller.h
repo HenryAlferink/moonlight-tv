@@ -29,7 +29,10 @@ typedef struct {
         lv_obj_t *host_latency;
         lv_obj_t *vdec_latency;
 #if TARGET_WEBOS
-        lv_obj_t *keyboard_capture;
+        lv_obj_t *keyboard_grabs;
+        lv_obj_t *keyboard_failures;
+        lv_obj_t *keyboard_events;
+        lv_obj_t *keyboard_sdl_events;
 #endif
     } stats_items;
     lv_obj_t *stats_pin;

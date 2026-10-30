@@ -134,6 +134,9 @@ void stream_input_handle_key(stream_input_t *input, const SDL_KeyboardEvent *eve
     if (stream_input_webos_intercept_remote_keys(input, event, &keyCode)) {
         return;
     }
+    /* Diagnostic only: count SDL key events after remote buttons are filtered.
+     * Compare with raw events during a controlled typing test. */
+    keyboard_meta_note_sdl_event(input->keyboard_meta);
     /* Avoid forwarding Meta twice when it is read from /dev/input.
      * All ordinary keys remain handled by original Moonlight SDL code. */
     if (event->keysym.scancode == SDL_SCANCODE_LGUI ||

@@ -16,6 +16,9 @@ typedef struct keyboard_meta_diagnostics_t {
     int failures;   /* EVIOCGRAB failures */
     int last_errno; /* Last failed ioctl errno (0 if none) */
     int events;     /* Recognized raw key events received by the reader */
+    int sdl_events; /* SDL key events observed while grab was active */
 } keyboard_meta_diagnostics_t;
 void keyboard_meta_get_diagnostics(const keyboard_meta_t *watcher,
                                   keyboard_meta_diagnostics_t *out);
+
+void keyboard_meta_note_sdl_event(keyboard_meta_t *watcher);
