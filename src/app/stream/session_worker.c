@@ -21,7 +21,11 @@ int session_worker(session_t *session) {
     int appId = session->app_id;
     session->player = NULL;
 
-#if FEATURE_INPUT_EVMOUSE
+#if FEATURE_INPUT_EVMOUSE && !TARGET_WEBOS
+    /* Non-webOS evmouse backends still expect a device before streaming.
+     * On webOS the mouse worker supports hotplug and must not block stream
+     * startup: a Bluetooth mouse may be disconnected or powered off, and
+     * its input node will appear later while the session is running. */
     if (!session->config.view_only && session->config.hardware_mouse) {
         session_evmouse_wait_ready(&session->input.evmouse);
     }
